@@ -12,6 +12,7 @@ extern "C" {
     fn stopService(service_name: *const i8) -> bool;
 }
 
+#[cfg(linux)]
 #[link(name = "systemd")]
 extern "C" {
     fn sd_bus_open_system(bus: *mut *mut std::ffi::c_void) -> i32;
@@ -19,6 +20,7 @@ extern "C" {
 }
 
 fn main() -> Result<()> {
+    #[cfg(linux)]
     unsafe {
         let mut bus: *mut std::ffi::c_void = std::ptr::null_mut();
         sd_bus_open_system(&mut bus);
