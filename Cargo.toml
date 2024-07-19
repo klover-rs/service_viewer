@@ -1,0 +1,14 @@
+[package]
+name = "try_systemd_in_c"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+colored = "2.1.0"
+crossterm = "0.27.0"
+
+
+[build-dependencies]
+cc = "1.1.5"
+pkg-config = "0.3.30"
