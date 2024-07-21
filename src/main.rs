@@ -1,5 +1,6 @@
 use std::{error::Error, ffi::{CStr, CString}, io::{self, Write}, os::raw::c_char, sync::Mutex};
 use crossterm::event::KeyEvent;
+use libc::{c_int, wchar_t};
 use ratatui::{
     backend::Backend,
     buffer::Buffer,
@@ -38,8 +39,9 @@ pub struct ServiceDetails {
 extern "C" {
     fn doesServiceExist(service_name: *const i8) -> bool;
     fn isServiceRunning(service_name: *const i8) -> bool;
-    fn stop_service(service_name: *const i8) -> bool;
     fn getServiceDetails(service_name: *const i8, details: *mut ServiceDetails);
+    fn EnumerateServiceNames(serviceNames: *mut *mut *mut wchar_t, count: *mut c_int) -> bool;
+    fn FreeServiceNamesArray(serviceNames: *mut *mut wchar_t, count: c_int);
 }
 
 
@@ -54,6 +56,7 @@ extern "C" {
 lazy_static::lazy_static! {
     static ref SERVICES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 }
+
 
 fn main() -> Result<(), Box<dyn Error>> {
 
@@ -83,11 +86,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     get_service_details();
-
-    
+   
     tui::init_error_hooks()?;
     let terminal = tui::init_terminal()?;
-
 
     let mut app = App::new();
     app.run(terminal)?;
@@ -96,6 +97,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+
 
 struct App {
     should_exit: bool,
@@ -121,51 +124,85 @@ enum Status {
 }
 
 fn get_service_details() -> Vec<(Status, String, String)> {
-    let mut services_ = Vec::new();
-        
-    let services = SERVICES.lock().unwrap();
+    let mut services_: Vec<(Status, String, String)> = Vec::new();
 
-    for service in services.clone() {
-        
-        let c_service_string = CString::new(service.clone()).unwrap();
+    loop {
+        let mut services: std::sync::MutexGuard<Vec<String>> = SERVICES.lock().unwrap();
 
-        let result = unsafe { doesServiceExist(c_service_string.as_ptr()) };
-
-        if result {
-            let get_status = unsafe { isServiceRunning(c_service_string.as_ptr()) };
-
-            let mut details = ServiceDetails {
-                service_name: [0; 256],
-                service_display_name: [0; 256],
-                executable_path: [0; 1024],
-                service_type: [0; 256],
-                service_account: [0; 256],
-            };
-
+        if let Some(_) = services.iter().position(|s| s == ":all_services") {
             unsafe {
-                getServiceDetails(c_service_string.as_ptr(), &mut details);
+                let mut service_names: *mut *mut wchar_t = std::ptr::null_mut();
+                let mut count: c_int = 0;
+
+                let success = EnumerateServiceNames(&mut service_names, &mut count);
+                if success {
+                    services.clear();
+
+                    for i in 0..count {
+                        let name = *service_names.add(i as usize);
+                        let name_str = wchar_to_string(name);
+                        println!("service name: {}", &name_str);
+                        services.push(name_str);
+                    }
+
+                    FreeServiceNamesArray(service_names, count);
+                } else {
+                    eprintln!("failed to enumerate service names.");
+                }
             }
+            
+            continue; 
+        }
 
-            let service_display_name = unsafe { CStr::from_ptr(details.service_display_name.as_ptr()).to_string_lossy().to_string() }; //be cautious: this is a unsafe function
-            let service_name = unsafe { CStr::from_ptr(details.service_name.as_ptr()).to_string_lossy().to_string() };
-            let executable_path = unsafe { CStr::from_ptr(details.executable_path.as_ptr()).to_string_lossy().to_string() };
-            let service_type = unsafe { CStr::from_ptr(details.service_type.as_ptr()).to_string_lossy().to_string() };
-            let service_account = unsafe { CStr::from_ptr(details.service_account.as_ptr()).to_string_lossy().to_string() };
+        for service in services.iter() {
+            let c_service_string = CString::new(service.clone()).unwrap();
+            let result = unsafe { doesServiceExist(c_service_string.as_ptr()) };
 
-            let service_details = format!("Service Name: {}\nService Display Name: {}\nService Type: {}\nService Executable Path: {}\nService Account: {}", service_name, service_display_name, service_type, executable_path, service_account);
+            if result {
+                let get_status = unsafe { isServiceRunning(c_service_string.as_ptr()) };
 
-            if get_status {
-                services_.push((Status::Active, service_display_name, service_details))
-            } else {
-                services_.push((Status::Inactive, service_display_name, service_details))
+                let mut details = ServiceDetails {
+                    service_name: [0; 256],
+                    service_display_name: [0; 256],
+                    executable_path: [0; 1024],
+                    service_type: [0; 256],
+                    service_account: [0; 256],
+                };
+
+                unsafe { getServiceDetails(c_service_string.as_ptr(), &mut details) };
+
+                let service_display_name = unsafe { CStr::from_ptr(details.service_display_name.as_ptr()).to_string_lossy().to_string() };
+                let service_name = unsafe { CStr::from_ptr(details.service_name.as_ptr()).to_string_lossy().to_string() };
+                let executable_path = unsafe { CStr::from_ptr(details.executable_path.as_ptr()).to_string_lossy().to_string() };
+                let service_type = unsafe { CStr::from_ptr(details.service_type.as_ptr()).to_string_lossy().to_string() };
+                let service_account = unsafe { CStr::from_ptr(details.service_account.as_ptr()).to_string_lossy().to_string() };
+
+                let service_details = format!("Service Name: {}\nService Display Name: {}\nService Type: {}\nService Executable Path: {}\nService Account: {}", service_name, service_display_name, service_type, executable_path, service_account);
+
+                if get_status {
+                    services_.push((Status::Active, service_display_name, service_details));
+                } else {
+                    services_.push((Status::Inactive, service_display_name, service_details));
+                }
             }
         }
 
+        break;
     }
 
-    drop(services);
-
     services_
+}
+
+fn wchar_to_string(wchar_ptr: *const wchar_t) -> String {
+    let mut s = String::new();
+    unsafe {
+        let mut i = 0;
+        while *wchar_ptr.offset(i) != 0 {
+            s.push((*wchar_ptr.offset(i)) as u8 as char);
+            i += 1;
+        }
+    }
+    s
 }
 
 impl App {
@@ -223,9 +260,6 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => self.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.select_previous(),
             KeyCode::Char('g') | KeyCode::Char('G') | KeyCode::Home => self.select_first(),
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
-                self.toggle_status();
-            }
             _ => {}
         }
     }
@@ -245,25 +279,7 @@ impl App {
         self.status_list.state.select_first();
     }
 
-    /// Changes the status of the selected list item
-    fn toggle_status(&mut self) {
-        if let Some(i) = self.status_list.state.selected() {
-            self.status_list.items[i].status = match self.status_list.items[i].status {
-                Status::Active => {
-                    let c_service_name = CString::new(self.status_list.items[i].service_name.clone()).unwrap();
-
-                    //unsafe { stop_service(c_service_name.as_ptr()) };
-
-                    Status::Inactive
-                },
-                Status::Inactive => {
-                    
-
-                    Status::Active
-                },
-            }
-        }
-    }
+    
 }
 
 impl Widget for &mut App {
