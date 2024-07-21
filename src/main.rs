@@ -7,7 +7,7 @@ use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Constraint, Layout, Rect},
     style::{
-        palette::tailwind::{BLUE, GREEN, SLATE},
+        palette::tailwind::{BLUE, GREEN, SLATE, RED},
         Color, Modifier, Style, Stylize,
     },
     symbols,
@@ -24,7 +24,8 @@ const NORMAL_ROW_BG: Color = SLATE.c950;
 const ALT_ROW_BG_COLOR: Color = SLATE.c900;
 const SELECTED_STYLE: Style = Style::new().bg(SLATE.c800).add_modifier(Modifier::BOLD);
 const TEXT_FG_COLOR: Color = SLATE.c200;
-const COMPLETED_TEXT_FG_COLOR: Color = GREEN.c500;
+const INACTIVE_TEXT_FG_COLOR: Color = RED.c500;
+const RUNNING_TEXT_FG_COLOR: Color = GREEN.c500;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -333,8 +334,8 @@ impl App {
             .map(|(i, todo_item)| {
                 let color = alternate_colors(i);
                 let line = match todo_item.status {
-                    Status::Inactive => Line::styled(format!(" ☐ {}", todo_item.service_name), TEXT_FG_COLOR),
-                    Status::Active => Line::styled(format!(" ✓ {}", todo_item.service_name), COMPLETED_TEXT_FG_COLOR),
+                    Status::Inactive => Line::styled(format!(" x {}", todo_item.service_name), INACTIVE_TEXT_FG_COLOR),
+                    Status::Active => Line::styled(format!(" o {}", todo_item.service_name), RUNNING_TEXT_FG_COLOR),
                 };
                 ListItem::new(line.bg(color)) // Apply color styling here
             })
@@ -356,8 +357,8 @@ impl App {
         // We get the info depending on the item's state.
         let info = if let Some(i) = self.status_list.state.selected() {
             match self.status_list.items[i].status {
-                Status::Active => format!("✓ Active\n{}", self.status_list.items[i].description),
-                Status::Inactive => format!("☐ Inactive\n{}", self.status_list.items[i].description),
+                Status::Active => format!("o Active\n{}", self.status_list.items[i].description),
+                Status::Inactive => format!("x Inactive\n{}", self.status_list.items[i].description),
             }
         } else {
             "Nothing selected...".to_string()
@@ -392,9 +393,9 @@ const fn alternate_colors(i: usize) -> Color {
 impl From<&StatusItem> for ListItem<'_> {
     fn from(value: &StatusItem) -> Self {
         let line = match value.status {
-            Status::Inactive => Line::styled(format!(" ☐ {}", value.service_name), TEXT_FG_COLOR),
+            Status::Inactive => Line::styled(format!(" ☐ {}", value.service_name), INACTIVE_TEXT_FG_COLOR),
             Status::Active => {
-                Line::styled(format!(" ✓ {}", value.service_name), COMPLETED_TEXT_FG_COLOR)
+                Line::styled(format!(" √ {}", value.service_name), RUNNING_TEXT_FG_COLOR)
             }
         };
         ListItem::new(line)
