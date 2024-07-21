@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <cstring>
 
 extern "C" _declspec() bool isServiceRunning(const char* service_name) {
 
@@ -51,115 +52,6 @@ extern "C" _declspec() bool doesServiceExist(const char* service_name) {
     return false;
 }
 
-extern "C" _declspec() bool start_service(const char* service_name) {
-    SC_HANDLE sc_manager = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
-    if (!sc_manager) {
-        std::cerr << "failed to open sc manager\n";
-        return false;
-    }
-
-    SC_HANDLE service = OpenServiceA(sc_manager, service_name, SERVICE_START);
-    if (!service) {
-        CloseServiceHandle(sc_manager);
-        return false;
-    }
-
-    if (!StartService(service, 0, NULL)) {
-        CloseServiceHandle(service);
-        CloseServiceHandle(sc_manager);
-        return false;
-    }
-
-    CloseServiceHandle(sc_manager);
-    CloseServiceHandle(service);
-
-    return true;
-}
-
-extern "C" _declspec() bool stop_service(const char* service_name) {
-    SC_HANDLE sc_manager = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
-    if (!sc_manager) {
-        std::cerr << "failed to open sc manager\n";
-        return false;
-    }
-
-    SC_HANDLE service = OpenServiceA(sc_manager, service_name, SERVICE_STOP | SERVICE_QUERY_STATUS);
-    if (!service) {
-        CloseServiceHandle(sc_manager);
-        std::cerr << "failed to open service" << GetLastError() << "\n";
-         return false;
-    }
-
-    SERVICE_STATUS_PROCESS status;
-    DWORD bytes_needed;
-
-    if (!ControlService(service, SERVICE_CONTROL_STOP, (LPSERVICE_STATUS)&status)) {
-        CloseServiceHandle(service);
-        CloseServiceHandle(sc_manager);
-        std::cerr << "failed to run ControlService" << GetLastError() << "\n";
-        return false;
-    }
-
-    while (QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, (LPBYTE)&status, sizeof(SERVICE_STATUS_PROCESS), &bytes_needed)) {
-        if (status.dwCurrentState == SERVICE_STOPPED) {
-            break;
-        }
-        Sleep(10);
-    }
-
-    CloseServiceHandle(sc_manager);
-    CloseServiceHandle(service);
-
-    return true;
-
-}
-
-enum ServiceStartType {
-    AutoStart = 2,
-    DemandStart = 3,
-    Disabled = 4
-};
-
-extern "C" _declspec() bool changeServiceStartType(const char* service_name, ServiceStartType startType) {
-    SC_HANDLE sc_manager = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
-    if (!sc_manager) {
-        std::cerr << "failed to open sc manager\n";
-        return false;
-    }
-
-    SC_HANDLE service = OpenServiceA(sc_manager, service_name, SERVICE_STOP | SERVICE_QUERY_STATUS);
-    if (!service) {
-        CloseServiceHandle(sc_manager);
-        std::cerr << "failed to open service\n";
-         return false;
-    }
-
-    BOOL bSuccess = ChangeServiceConfigA(
-        service,
-        SERVICE_NO_CHANGE,
-        (DWORD)startType,
-        SERVICE_NO_CHANGE,
-        NULL,             
-        NULL,            
-        NULL,             
-        NULL,            
-        NULL,             
-        NULL,
-        NULL          
-    );
-
-    CloseServiceHandle(sc_manager);
-    CloseServiceHandle(service);
-
-    if (!bSuccess) {
-        std::cerr << "ChangeServiceConfig failed: " << GetLastError() << std::endl;
-        return false;
-    } else {
-        std::cout << "Changed service type successfully.\n";
-        return true;
-    }
-
-}
 
 extern "C" {
     struct ServiceDetails {
@@ -194,7 +86,7 @@ void getServiceDetails(const char* service_name, ServiceDetails* details) {
     SC_HANDLE service = OpenServiceA(sc_manager, service_name,  SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS | SERVICE_ENUMERATE_DEPENDENTS);
     if (!service) {
         CloseServiceHandle(sc_manager);
-        std::cerr << "failed to open service\n";
+        std::cerr << "failed to open service" << GetLastError() << std::endl;
         return;
     }
 
@@ -260,3 +152,93 @@ void getServiceDetails(const char* service_name, ServiceDetails* details) {
     CloseServiceHandle(sc_manager);
     CloseServiceHandle(service);
 } 
+
+
+std::wstring ConvertLPSTRToWString(const LPSTR ansiStr) {
+    if (ansiStr == nullptr) {
+        return std::wstring();
+    }
+
+    int sizeNeeded = MultiByteToWideChar(CP_ACP, 0, ansiStr, -1, NULL, 0);
+    if (sizeNeeded == 0) {
+        return std::wstring();
+    }
+
+    std::wstring wideStr(sizeNeeded, L'\0');
+
+    MultiByteToWideChar(CP_ACP, 0, ansiStr, -1, &wideStr[0], sizeNeeded);
+
+    return wideStr;
+}
+
+extern "C" _declspec() bool EnumerateServiceNames(wchar_t*** serviceNames, int* count) {
+    SC_HANDLE sc_manager = OpenSCManager(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
+    if (!sc_manager) {
+        std::cerr << "OpenSCManager failed with error: " << GetLastError() << std::endl;
+        return false;
+    }
+
+    DWORD bytesNeeded = 0;
+    DWORD servicesReturned = 0;
+    DWORD resumeHandle = 0;
+
+    EnumServicesStatus(
+        sc_manager,
+        SERVICE_WIN32,
+        SERVICE_STATE_ALL,
+        NULL,
+        0, 
+        &bytesNeeded, 
+        &servicesReturned, 
+        &resumeHandle
+    );
+
+    DWORD last_error = GetLastError();
+    if (last_error != ERROR_MORE_DATA) {
+        std::cerr << "EnumServiceStatus failed with error: " << last_error << std::endl;
+        CloseServiceHandle(sc_manager);
+        return false;
+    }
+
+    std::vector<BYTE> buffer(bytesNeeded);
+    ENUM_SERVICE_STATUS* serviceStatus = reinterpret_cast<ENUM_SERVICE_STATUS*>(buffer.data());
+
+    if (!EnumServicesStatus(
+        sc_manager, 
+        SERVICE_WIN32, 
+        SERVICE_STATE_ALL, 
+        serviceStatus, 
+        bytesNeeded, 
+        &bytesNeeded, 
+        &servicesReturned, 
+        &resumeHandle
+    )) {
+        std::cerr << "EnumServicesStatus failed with error: " << GetLastError() << std::endl;
+        CloseServiceHandle(sc_manager);
+        return false;
+    }
+
+    wchar_t** namesArray = new wchar_t*[servicesReturned];
+    for (DWORD i = 0; i < servicesReturned; ++i) {
+
+        std::wstring service_name = ConvertLPSTRToWString(serviceStatus[i].lpServiceName);
+
+        size_t len = wcslen(service_name.c_str());
+        namesArray[i] = new wchar_t[len + 1];
+        wmemcpy(namesArray[i], service_name.c_str(), len + 1);
+    }
+
+    *serviceNames = namesArray;
+    *count = servicesReturned;
+
+    CloseServiceHandle(sc_manager);
+    return true;
+
+}
+
+extern "C" _declspec() void FreeServiceNamesArray(wchar_t** serviceNames, int count) {
+    for (int i = 0; i < count; ++i) {
+        delete[] serviceNames[i];
+    }
+    delete[] serviceNames;
+}
