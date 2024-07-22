@@ -1,4 +1,4 @@
-use std::{error::Error, ffi::{CStr, CString}, io::{self, Write}, os::raw::c_char, sync::Mutex};
+use std::{error::Error, ffi::{CStr, CString}, io::{self, Write}, os::raw::c_char, slice, sync::Mutex};
 use crossterm::event::KeyEvent;
 use libc::{c_int, wchar_t};
 use ratatui::{
@@ -42,13 +42,21 @@ extern "C" {
     fn doesServiceExist(service_name: *const i8) -> bool;
     fn isServiceRunning(service_name: *const i8) -> bool;
     fn getServiceDetails(service_name: *const i8, details: *mut ServiceDetails);
+    #[cfg(target_os = "windows")]
     fn EnumerateServiceNames(serviceNames: *mut *mut *mut wchar_t, count: *mut c_int) -> bool;
+
+    fn serviceNamesArray(count: *mut usize) -> *mut *mut c_char;
+    fn freeServiceNameArray(array: *mut *mut c_char, count: usize);
+
+
+
+    #[cfg(target_os = "windows")]
     fn FreeServiceNamesArray(serviceNames: *mut *mut wchar_t, count: c_int);
 }
 
 
 
-#[cfg(linux)]
+#[cfg(target_os = "linux")]
 #[link(name = "systemd")]
 extern "C" {
     fn sd_bus_open_system(bus: *mut *mut std::ffi::c_void) -> i32;
@@ -62,7 +70,7 @@ lazy_static::lazy_static! {
 
 fn main() -> Result<(), Box<dyn Error>> {
 
-    #[cfg(linux)]
+    #[cfg(target_os = "linux")]
     unsafe {
         let mut bus: *mut std::ffi::c_void = std::ptr::null_mut();
         sd_bus_open_system(&mut bus);
@@ -128,33 +136,85 @@ enum Status {
 fn get_service_details() -> Vec<(Status, String, String)> {
     let mut services_: Vec<(Status, String, String)> = Vec::new();
 
+    fn char_array_to_string(c_array: *mut std::os::raw::c_char) -> Option<String> {
+        if c_array.is_null() {
+            return None;
+        }
+    
+        unsafe {
+            let c_str = CStr::from_ptr(c_array);
+            Some(c_str.to_string_lossy().into_owned())
+        }
+    }
+
     loop {
         let mut services: std::sync::MutexGuard<Vec<String>> = SERVICES.lock().unwrap();
 
         if let Some(_) = services.iter().position(|s| s == ":all_services") {
             unsafe {
+                let mut count: usize = 0;
+                let c_array = serviceNamesArray(&mut count);
+
+                if !c_array.is_null() {
+                    let mut rust_strings: Vec<String> = Vec::with_capacity(count);
+
+                    for i in 0..count {
+                        let c_str = *c_array.add(i);
+                        let rust_string = c_char_to_string(c_str);
+                        rust_strings.push(rust_string);
+                    }
+
+                    freeServiceNameArray(c_array, count);
+
+                    services.clear();
+
+                    for string in rust_strings {
+                        println!("{}", string);
+                        services.push(string);
+                    }
+                } else {
+                    eprintln!("failed to enumerate service names.");
+                }
+                
+
+                continue; 
+                
+                #[cfg(target_os = "windows")]
                 let mut service_names: *mut *mut wchar_t = std::ptr::null_mut();
+                
+                #[cfg(target_os = "windows")]
                 let mut count: c_int = 0;
 
+                #[cfg(target_os = "windows")]
                 let success = EnumerateServiceNames(&mut service_names, &mut count);
+                #[cfg(target_os = "windows")]
                 if success {
+
+                    for i in 0..count {
+                        let name = *service_names.add(i as usize);
+                    }
+
                     services.clear();
 
                     for i in 0..count {
                         let name = *service_names.add(i as usize);
+                        #[cfg(target_os = "windows")]
                         let name_str = wchar_to_string(name);
+                        let name_str = c_char_to_string(name);
                         println!("service name: {}", &name_str);
                         services.push(name_str);
                     }
 
+                    #[cfg(target_os = "windows")]
                     FreeServiceNamesArray(service_names, count);
                 } else {
                     eprintln!("failed to enumerate service names.");
                 }
             }
             
-            continue; 
+            
         }
+        
 
         for service in services.iter() {
             let c_service_string = CString::new(service.clone()).unwrap();
@@ -207,6 +267,17 @@ fn wchar_to_string(wchar_ptr: *const wchar_t) -> String {
         }
     }
     s
+}
+
+fn c_char_to_string(cstr: *const c_char) -> String {
+    if cstr.is_null() {
+        return String::new();
+    }
+    
+    unsafe {
+        let c_str = CStr::from_ptr(cstr);
+        c_str.to_string_lossy().into_owned()
+    }
 }
 
 impl App {
