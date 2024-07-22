@@ -58,6 +58,7 @@ extern "C" {
         char service_name[256];
         char service_display_name[256];
         char executable_path[1024];
+        char description[4192];
         char service_type[1024];
         char service_account[256];
     };
@@ -123,20 +124,65 @@ void getServiceDetails(const char* service_name, ServiceDetails* details) {
         return;
     }
 
-    strncpy_s(
-        details->executable_path,
-        sizeof(details->executable_path),
-        pServiceConfig->lpBinaryPathName,
-        sizeof(details->executable_path) - 1
-    );
+    if (pServiceConfig->lpBinaryPathName != NULL) {
+        strncpy_s(
+            details->executable_path,
+            sizeof(details->executable_path),
+            pServiceConfig->lpBinaryPathName,
+            sizeof(details->executable_path) - 1
+        );
+    } else {
+        strncpy_s(
+            details->executable_path,
+            sizeof(details->executable_path),
+            "no executable path provided",
+            sizeof(details->executable_path) - 1
+        );
+    }
 
-    strncpy_s(
-        details->service_account,
-        sizeof(details->service_account),
-        pServiceConfig->lpServiceStartName,
-        sizeof(details->service_account)
-    );
+    if (pServiceConfig->lpServiceStartName != NULL) {
+        strncpy_s(
+            details->service_account,
+            sizeof(details->service_account),
+            pServiceConfig->lpServiceStartName,
+            sizeof(details->service_account)
+        );
+    } else {
+        strncpy_s(
+            details->service_account,
+            sizeof(details->service_account),
+            "no service account was provided",
+            sizeof(details->service_account)
+        );
+    }
+
     
+    DWORD descBytesNeeded = 0;
+    QueryServiceConfig2(service, SERVICE_CONFIG_DESCRIPTION, NULL, 0, &descBytesNeeded);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+        std::wcerr << L"QueryServiceConfig2 failed: " << GetLastError() << std::endl;
+        CloseServiceHandle(service);
+        CloseServiceHandle(sc_manager);
+        return;
+    }
+
+
+    std::vector<BYTE> descBuffer(descBytesNeeded);
+    if (!QueryServiceConfig2(service, SERVICE_CONFIG_DESCRIPTION, descBuffer.data(), descBytesNeeded, &descBytesNeeded))
+    {
+        std::cerr << "QueryServiceConfig2 failed: " << GetLastError() << std::endl;
+        CloseServiceHandle(service);
+        CloseServiceHandle(sc_manager);
+        return;
+    }
+
+    SERVICE_DESCRIPTION* description = reinterpret_cast<SERVICE_DESCRIPTION*>(descBuffer.data());
+   
+    if (description->lpDescription) {
+        strncpy_s(details->description, sizeof(details->description), description->lpDescription, _TRUNCATE);
+    } else {
+        strncpy_s(details->description, sizeof(details->description), "no description provided", _TRUNCATE);
+    }
 
     char displayName[256];
     DWORD displayNameSize = sizeof(displayName) / sizeof(displayName[0]);

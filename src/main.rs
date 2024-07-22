@@ -33,6 +33,7 @@ pub struct ServiceDetails {
     service_name: [c_char; 256],
     service_display_name: [c_char; 256],
     executable_path: [c_char; 1024],
+    description: [c_char; 4192],
     service_type: [c_char; 256],
     service_account: [c_char; 256],
 }
@@ -166,6 +167,7 @@ fn get_service_details() -> Vec<(Status, String, String)> {
                     service_name: [0; 256],
                     service_display_name: [0; 256],
                     executable_path: [0; 1024],
+                    description: [0; 4192],
                     service_type: [0; 256],
                     service_account: [0; 256],
                 };
@@ -175,10 +177,11 @@ fn get_service_details() -> Vec<(Status, String, String)> {
                 let service_display_name = unsafe { CStr::from_ptr(details.service_display_name.as_ptr()).to_string_lossy().to_string() };
                 let service_name = unsafe { CStr::from_ptr(details.service_name.as_ptr()).to_string_lossy().to_string() };
                 let executable_path = unsafe { CStr::from_ptr(details.executable_path.as_ptr()).to_string_lossy().to_string() };
+                let description = unsafe { CStr::from_ptr(details.description.as_ptr()).to_string_lossy().to_string() };
                 let service_type = unsafe { CStr::from_ptr(details.service_type.as_ptr()).to_string_lossy().to_string() };
                 let service_account = unsafe { CStr::from_ptr(details.service_account.as_ptr()).to_string_lossy().to_string() };
 
-                let service_details = format!("Service Name: {}\nService Display Name: {}\nService Type: {}\nService Executable Path: {}\nService Account: {}", service_name, service_display_name, service_type, executable_path, service_account);
+                let service_details = format!("Service Name: {}\nService Display Name: {}\nService Type: {}\nService Executable Path: {}\nService Description: {}\nService Account: {}", service_name, service_display_name, service_type, executable_path, description, service_account);
 
                 if get_status {
                     services_.push((Status::Active, service_display_name, service_details));
