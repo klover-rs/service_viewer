@@ -45,7 +45,9 @@ extern "C" {
     #[cfg(target_os = "windows")]
     fn EnumerateServiceNames(serviceNames: *mut *mut *mut wchar_t, count: *mut c_int) -> bool;
 
+    #[cfg(target_os = "linux")]
     fn serviceNamesArray(count: *mut usize) -> *mut *mut c_char;
+    #[cfg(target_os = "linux")]
     fn freeServiceNameArray(array: *mut *mut c_char, count: usize);
 
 
@@ -152,65 +154,64 @@ fn get_service_details() -> Vec<(Status, String, String)> {
 
         if let Some(_) = services.iter().position(|s| s == ":all_services") {
             unsafe {
-                let mut count: usize = 0;
-                let c_array = serviceNamesArray(&mut count);
+                #[cfg(target_os = "linux")]
+                {
+                    let mut count: usize = 0;
+                    let c_array = serviceNamesArray(&mut count);
 
-                if !c_array.is_null() {
-                    let mut rust_strings: Vec<String> = Vec::with_capacity(count);
+                    if !c_array.is_null() {
+                        let mut rust_strings: Vec<String> = Vec::with_capacity(count);
 
-                    for i in 0..count {
-                        let c_str = *c_array.add(i);
-                        let rust_string = c_char_to_string(c_str);
-                        rust_strings.push(rust_string);
+                        for i in 0..count {
+                            let c_str = *c_array.add(i);
+                            let rust_string = c_char_to_string(c_str);
+                            rust_strings.push(rust_string);
+                        }
+
+                        freeServiceNameArray(c_array, count);
+
+                        services.clear();
+
+                        for string in rust_strings {
+                            println!("{}", string);
+                            services.push(string);
+                        }
+                    } else {
+                        eprintln!("failed to enumerate service names.");
                     }
 
-                    freeServiceNameArray(c_array, count);
-
-                    services.clear();
-
-                    for string in rust_strings {
-                        println!("{}", string);
-                        services.push(string);
-                    }
-                } else {
-                    eprintln!("failed to enumerate service names.");
+                    
                 }
-                
+                #[cfg(f)]
+                {
+                    let mut service_names: *mut *mut wchar_t = std::ptr::null_mut();
+                    let mut count: c_int = 0;
 
-                continue; 
-                
-                #[cfg(target_os = "windows")]
-                let mut service_names: *mut *mut wchar_t = std::ptr::null_mut();
-                
-                #[cfg(target_os = "windows")]
-                let mut count: c_int = 0;
+                    let success = EnumerateServiceNames(&mut service_names, &mut count);
+                    if success {
 
-                #[cfg(target_os = "windows")]
-                let success = EnumerateServiceNames(&mut service_names, &mut count);
-                #[cfg(target_os = "windows")]
-                if success {
+                        for i in 0..count {
+                            let name = *service_names.add(i as usize);
+                        }
+    
+                        services.clear();
+    
+                        for i in 0..count {
+                            let name = *service_names.add(i as usize);
+                            let name_str = wchar_to_string(name);
+                            println!("service name: {}", &name_str);
+                            services.push(name_str);
+                        }
 
-                    for i in 0..count {
-                        let name = *service_names.add(i as usize);
+                        FreeServiceNamesArray(service_names, count);
+                    } else {
+                        eprintln!("failed to enumerate service names.");
                     }
-
-                    services.clear();
-
-                    for i in 0..count {
-                        let name = *service_names.add(i as usize);
-                        #[cfg(target_os = "windows")]
-                        let name_str = wchar_to_string(name);
-                        let name_str = c_char_to_string(name);
-                        println!("service name: {}", &name_str);
-                        services.push(name_str);
-                    }
-
-                    #[cfg(target_os = "windows")]
-                    FreeServiceNamesArray(service_names, count);
-                } else {
-                    eprintln!("failed to enumerate service names.");
                 }
+
             }
+
+            continue; 
             
             
         }
